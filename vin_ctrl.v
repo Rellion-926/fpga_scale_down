@@ -32,13 +32,14 @@ module vin_ctrl
     input [15:0] vin_yres,
 
     output reg wr_valid,
-    output [31:0] vin_addr,
+    output [15:0] vin_wr_x,
+    output [15:0] vin_wr_y,
     output [15:0] vin_wr_dat
 );
 
 reg [15:0] vin_x;
 reg [15:0] vin_y;
-
+reg ini_stat;
 always @(posedge vin_clk) begin
     if(~frame_sync_n || ~rst_n) begin
         vin_x <= 0;
@@ -50,18 +51,23 @@ always @(posedge vin_clk) begin
                 vin_x <= 0;
             end
             else begin
-                if(vin_x < vin_xres - 1) begin
-                    vin_x <= vin_x + 1;
+                if(vin_valid && vout_ready) begin
+                    if(vin_x < vin_xres - 1) begin
+                        vin_x <= vin_x + 1;
+                    end
+                    else begin
+                        vin_x <= 0;
+                        vin_y <= vin_y + 1;
+                    end
                 end
                 else begin
                     vin_x <= 0;
-                    vin_y <= vin_y + 1;
+                    vin_y <= 0;
                 end
             end
         end
 end
 
-reg ini_stat;
 always @(posedge vin_clk) begin
     if(~frame_sync_n || ~rst_n) begin
         ini_stat <= 1;
@@ -72,6 +78,8 @@ always @(posedge vin_clk) begin
                 ini_stat <= 0;
             end
         end
+        else
+            ini_stat <= 1;
 end
 
 always @(*) begin
@@ -89,9 +97,8 @@ always @(*) begin
     end
 end
 
-wire [15:0] addr_y = vin_y;
-wire [15:0] addr_x = (vin_x << 2); 
-assign vin_addr = {addr_y, addr_x};
+assign vin_wr_y = vin_y;
+assign vin_wr_x = vin_x;
 assign vin_wr_dat = vin_dat;
 
 endmodule
