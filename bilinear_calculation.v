@@ -24,6 +24,9 @@ module bilinear_calculation
     input rst_n,
     input frame_sync_n,
 
+    input [15:0] vout_t_x,
+    input [15:0] vout_t_y,
+
     input coo_valid,
 	input [16:0] coefficient1,
 	input [16:0] coefficient2,
@@ -35,8 +38,10 @@ module bilinear_calculation
 	input [15:0] doutby,
 	input [15:0] doutby1,
 
-    output reg [15:0] vout_dat,
-    output reg vout_valid
+    output reg [15:0] vout_wr_x,
+    output reg [15:0] vout_wr_y,
+    output reg [15:0] vout_wr_dat,
+    output reg vout_wr_valid
 );
 
 wire [47:0]	vin_r1 = coefficient1*coefficient3*doutbx[15:11];
@@ -60,17 +65,21 @@ wire [47:0] reg_b = vin_b1 + vin_b2 + vin_b3 + vin_b4;
 
 always @(posedge vin_clk) begin
     if(~frame_sync_n || ~rst_n) begin
-        vout_valid <= 0;
-        vout_dat <= 16'hFF00;
+        vout_wr_valid <= 0;
+        vout_wr_dat <= 16'hFF00;
     end
     else begin
         if(coo_valid) begin
-            vout_valid <= 1;
-            vout_dat <= {reg_r[36:32], reg_g[36:32], reg_b[36:32]};
+            vout_wr_valid <= 1;
+            vout_wr_x <= vout_t_x;
+            vout_wr_y <= vout_t_y;
+            vout_wr_dat <= {reg_r[36:32], reg_g[36:32], reg_b[36:32]};
         end
         else begin
-            vout_valid <= 0;
-            vout_dat <= 16'hFF00;
+            vout_wr_valid <= 0;
+            vout_wr_x <= 0;
+            vout_wr_y <= 0;
+            vout_wr_dat <= 16'hFF00;
         end
     end
 end
