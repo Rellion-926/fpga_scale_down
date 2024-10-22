@@ -28,29 +28,61 @@ reg clk;
 reg rst_n;
 reg frame_sync_n;
 
-reg [15:0] vin_xres = 'd6;
-reg [15:0] vin_yres = 'd6;
-reg [15:0] vout_xres = 'd3;
-reg [15:0] vout_yres = 'd3;
-
-wire wr_valid;
-reg [31:0] wr_addr;
-reg [15:0] wr_dat;
-
-wire coo_valid;
-wire [15:0] coordinate_x;
-wire [15:0] coordinate_y;
-wire [16:0] coefficient1;
-wire [16:0] coefficient2;
-wire [16:0] coefficient3;
-wire [16:0] coefficient4; 
+reg [15:0] vin_xres = 'd4;
+reg [15:0] vin_yres = 'd4;
+reg [15:0] vout_xres = 'd8;
+reg [15:0] vout_yres = 'd8;
 
 reg [15:0] vin_dat;
 reg vin_valid;
 reg vout_ready;
 
+reg ddr_ready;
 
-vin_vout_ctrl io_ctrl
+wire fetch_en;
+reg [15:0] fetch_line;
+
+reg wr_ram_en;
+reg [15:0] ram_dat;
+reg fetch_done;
+
+wire vin_wr_valid;
+wire [15:0] vin_wr_x;
+wire [15:0] vin_wr_y;
+wire [15:0] vin_wr_dat;
+
+wire vout_wr_valid;
+wire [15:0] vout_wr_x;
+wire [15:0] vout_wr_y;
+wire [15:0] vout_wr_dat;
+
+scale_down_bilinear scale_down_bilinear
+(
+    .vin_clk(clk),
+    .rst_n(rst_n),
+    .frame_sync_n(frame_sync_n),
+
+    .vin_xres(vin_xres),
+    .vin_yres(vin_yres),
+    .vout_xres(vout_xres),
+    .vout_yres(vout_yres),
+
+    .ddr_ready(ddr_ready),
+
+    .fetch_en(fetch_en),
+    .fetch_line(fetch_line),
+
+    .wr_ram_en(wr_ram_en),
+    .ram_dat(ram_dat),
+    .fetch_done(fetch_done),
+
+    .vout_wr_valid(vout_wr_valid),
+    .vout_wr_x(vout_wr_x),
+    .vout_wr_y(vout_wr_y),
+    .vout_wr_dat(vout_wr_dat)
+);
+
+vin_ctrl vin_ctrl
 (
     .vin_clk(clk),
     .rst_n(rst_n),
@@ -62,76 +94,78 @@ vin_vout_ctrl io_ctrl
 
     .vin_xres(vin_xres),
     .vin_yres(vin_yres),
-    .vout_xres(vout_xres),
-    .vout_yres(vout_yres),
 
-    .wr_valid(wr_valid),
-    .vin_addr(wr_addr),
-    .vin_wr_dat(wr_dat),
-
-    .coo_valid(coo_valid),
-    .coordinate_x(coordinate_x),
-    .coordinate_y(coordinate_y),
-    .coefficient1(coefficient1),
-    .coefficient2(coefficient2),
-    .coefficient3(coefficient3),
-    .coefficient4(coefficient4)
+    .wr_valid(vin_wr_valid),
+    .vin_wr_x(vin_wr_x),
+    .vin_wr_y(vin_wr_y),
+    .vin_wr_dat(vin_wr_dat)
 );
 
+reg [31:0] vin_wr_addr;
 always @(*) begin
-    if(wr_valid)
-        slv_mem.backdoor_mem_write(wr_addr, wr_dat);
-end
-
-reg [31:0] addr_x;
-reg [15:0] doutbx;
-
-reg [31:0] addr_x1;
-reg [15:0] doutbx1;
-
-reg [31:0] addr_y;
-reg [15:0] doutby;
-
-reg [31:0] addr_y1;
-reg [15:0] doutby1;
-
-
-always @(*) begin
-    addr_x = {coordinate_y, (coordinate_x << 2)};
-    addr_x1 = {coordinate_y, ((coordinate_x + 1) << 2)};
-    addr_y = {coordinate_y+1, (coordinate_x << 2)};
-    addr_y1 = {coordinate_y+1, ((coordinate_x + 1) << 2)};
-    if(coo_valid) begin
-        slv_mem.backdoor_mem_read(addr_x, doutbx);
-        slv_mem.backdoor_mem_read(addr_x1, doutbx1);
-        slv_mem.backdoor_mem_read(addr_y, doutby);
-        slv_mem.backdoor_mem_read(addr_y1, doutby1);
+    if(vin_wr_valid) begin
+        vin_wr_addr = {vin_wr_y, (vin_wr_x << 2)};
+        slv_mem.backdoor_mem_write(vin_wr_addr, vin_wr_dat);
     end
 end
 
-wire [15:0] vout_dat;
-wire vout_valid;
+always @(negedge vin_wr_valid) ddr_ready <= 1;
+always @(posedge clk) ddr_ready <= 0;
 
-bilinear_calculation vout_cal
-(
-    .vin_clk(clk),
-    .rst_n(rst_n),
-    .frame_sync_n(frame_sync_n),
+reg vin_cnt_en;
+reg vin_cnt_flag;
+reg [15:0] vin_x;
+reg [15:0] vin_y;
+reg [31:0] vin_r_addr;
+always @(posedge clk) begin
+    if(~rst_n) begin
+        vin_cnt_en <= 0;
+        vin_cnt_flag <= 0;
+    end
+    else begin
+        if(~vin_cnt_en) begin
+            if(fetch_en) begin
+                vin_cnt_en <= 1;
+                vin_y <= fetch_line;
+            end
+            else begin
+                fetch_done <= 0;
+                vin_cnt_flag <= 0;
+            end
+        end
+        else begin
+            if(vin_cnt_flag == 1 && vin_x == vin_xres-1) begin
+                vin_cnt_en <= 0;
+                fetch_done <= 1;
+            end
+        end
+    end
+end
+assign wr_ram_en = vin_cnt_en;
 
-    .coo_valid(coo_valid),
-    .coefficient1(coefficient1),
-    .coefficient2(coefficient2),
-    .coefficient3(coefficient3),
-    .coefficient4(coefficient4),
+always @(posedge clk) begin
+    if(~frame_sync_n || ~rst_n)
+        vin_x <= 0;
+    else begin
+        if(vin_cnt_en) begin
+            if(vin_x < vin_xres-1) begin
+                vin_x <= vin_x + 1;
+            end
+            else begin
+                vin_x <= 0;
+                vin_y <= vin_y + 1;
+                vin_cnt_flag <= vin_cnt_flag + 1;
+            end
+        end
+    end
+end
 
-    .doutbx(doutbx),
-    .doutbx1(doutbx1),
-    .doutby(doutby),
-    .doutby1(doutby1),
-
-    .vout_dat(vout_dat),
-    .vout_valid(vout_valid)
-);
+always @(*) begin
+    if(vin_cnt_en) begin
+        vin_r_addr = {vin_y, (vin_x << 2)};
+        slv_mem.backdoor_mem_read(vin_r_addr, ram_dat);
+    end
+end
 
 axi_vip_slave ddr_vin
 (
